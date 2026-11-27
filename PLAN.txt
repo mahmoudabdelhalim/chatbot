@@ -111,27 +111,6 @@ The app is served from the domain root (`base` is `/`). Hosting under a sub-path
 
 The browser calls these hosts directly; they matter for CORS on the backends and for any Content-Security-Policy or egress allow-list.
 
-| Service | Host(s) | Protocol |
-| --- | --- | --- |
-| Main backend API | `VITE_BACKEND_URL` (`service.eyrad.net`) | HTTPS (axios) |
-| Campaigns service | `campaigns.eyrad.net` | HTTPS |
-| Short links | `eyrd.me` | HTTPS |
-| Realtime (Ably) | Ably cloud; token issued by backend `/broadcasting/auth` | WebSocket |
-| WhatsApp status | `api.ultramsg.com` + a socket.io server URL passed from the backend | HTTPS / WebSocket |
-| EyradPay | `VITE_EYRADPAY_URL` (e.g. `test.eyradpay.com`) | HTTPS / iframe |
-| POS receipts | `pos.eyrad.net` | Links |
-| Google reCAPTCHA v3 | `google.com`, `gstatic.com` | HTTPS (script) |
-| Help chatbot | `VITE_CHATBOT_SRC` | HTTPS (script) |
-| QR images | `api.qrserver.com` | HTTPS (images) |
-| Help center | `help.eyrad.net` | Links |
-
-The backends must allow the frontend's origin in CORS, including `Authorization` headers.
-
-## Operational notes
-
-- **Caching:** never cache `index.html` (it points to the new hashed bundles); cache `assets/` for a year. A stale `index.html` after a deploy causes blank pages or missing-chunk errors.
-- **HTTPS only:** reCAPTCHA, payments and WebSockets need a secure origin.
-- **WebSockets:** if a proxy or WAF sits in front, allow WebSocket upgrades to Ably and the socket.io host.
 - **Rollback:** keep the last 3–5 `dist/` releases; rollback = point back to the previous folder. No database or migration on this side.
 - **Build failures:** `npm run build` fails on any TypeScript error. `npm run build-only` is an emergency bypass, not the norm.
 - **Language:** the app is Arabic, right-to-left (`lang="ar" dir="rtl"`); no server-side impact.
