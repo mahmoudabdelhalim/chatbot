@@ -1,0 +1,138 @@
+# Eyrad Frontend — DevOps&#32;
+
+## Overview
+
+The Eyrad frontend is a static single-page app (Vue 3 + TypeScript, built with Vite 4). The build is plain HTML/JS/CSS — no Node server runs in production; any static web server or CDN can host it.
+
+| Item | Value |
+| --- | --- |
+| Framework | Vue 3.5, Pinia, Vue Router 4 |
+| Build tool | Vite 4 (`@vitejs/plugin-vue`) |
+| Language | TypeScript 5.0 (type-checked with `vue-tsc`) |
+| UI libraries | Bootstrap 5, Ant Design Vue 4, TinyMCE 8 (self-hosted in `public/tinymce`) |
+| Tests / lint | Vitest, ESLint, Prettier |
+| Repository | Bitbucket: `grandercodes/eyrad-frontend` |
+| Branches | `master` = production/main, `develop` = integration, feature branches merged via pull requests |
+
+## Requirements
+
+Use Node.js 18 or newer with npm; the team builds on Node 22 / npm 10 today. The repo pins no Node version (no `.nvmrc` or `engines`), so pin it in CI.
+
+- Package manager: npm (`package-lock.json` is committed — use `npm ci`)
+- Private package: `@eyrad/eyrad-icons` — confirm the CI runner can reach the registry it is published on (add an `.npmrc` token if it is private)
+- Build machine RAM: 4 GB+ recommended (type-check and Vite build run in parallel)
+
+## Build and run
+
+A production build is `npm ci && npm run build`; the output is the `dist/` folder, which is the only thing to deploy.
+
+| Command | What it does |
+| --- | --- |
+| `npm ci` | Clean install from the lockfile |
+| `npm run dev` | Local dev server on port 5173 with hot reload |
+| `npm run build` | Runs `vue-tsc` type-check and `vite build` in parallel; fails if either fails |
+| `npm run build-only` | Vite build without type-check (faster fallback) |
+| `npm run preview` | Serves `dist/` locally to smoke-test a build |
+| `npm run test:unit` | Vitest unit tests |
+| `npm run lint` | ESLint (with `--fix`; do not use it as a CI gate as-is) |
+
+Build output in `dist/`:
+
+- `index.html` — the single entry page
+- `assets/` — JS/CSS/images with content hashes in the file names
+- `tinymce/` — the self-hosted editor, copied from `public/`
+- `favicon.ico`
+
+## Environment variables
+
+All variables are `VITE_*` and are baked into the JS at build time: changing one needs a rebuild, and every value is readable by anyone in the browser. `.env` files are git-ignored, so CI must create `.env` (or `.env.production`) from its secret store before `npm run build`. One build per environment (dev / staging / production).
+
+| Variable | Purpose | Example / note |
+| --- | --- | --- |
+| `VITE_APP_ENV` | Environment name; selects Moyasar test vs live key | `production` in prod |
+| `VITE_APP_URL` | Public URL of this frontend | `https://<frontend-domain>` |
+| `VITE_BACKEND_URL` | Main API base (also used for Ably auth at `/broadcasting/auth`) | `https://dev-service.eyrad.net/portal` on dev |
+| `VITE_ASSET_URL` | Backend images base | `<backend>/images` |
+| `VITE_STORAGE_URL` | Backend file storage base | `<backend>/storage` |
+| `VITE_CAMPAIGN_BACKEND_URL` | Campaigns service API | `https://campaigns.eyrad.net/api` |
+| `VITE_LINKS_BACKEND_URL` | Short-links service | `https://eyrd.me/` |
+| `VITE_LINKS_API_KEY` | Short-links API key | Secret, exposed to browser |
+| `VITE_EYRADPAY_URL` | EyradPay portal URL | `https://test.eyradpay.com` on test |
+| `VITE_EYRADPAY_PUBLIC_KEY` | EyradPay public key | Public key |
+| `VITE_POS_RECEIPT_URL` | POS receipt links | `https://pos.eyrad.net/receipt/` |
+| `VITE_RECAPTCHA_SITE_KEY` | Google reCAPTCHA v3 site key | Public key |
+| `VITE_CHATBOT_SRC` / `VITE_CHATBOT_KEY` | Help chatbot script URL and key | Per environment |
+
+Present in `.env` but not read by the code (safe to drop): `VITE_APP_IP`, `VITE_ABLY_KEY`, `VITE_PUSHER_KEY`, `VITE_EYRAD_BANK_NAME`, `VITE_EYRAD_BANK_NUMBER`, `VITE_EYRAD_BANK_IBAN`, `VITE_RECAPTCHA_SECRET_KEY`.
+
+Security: `VITE_RECAPTCHA_SECRET_KEY` must never be in a frontend env file — move it to the backend only and rotate it. `VITE_LINKS_API_KEY` ships to every browser; treat it as public or proxy it through the backend.
+
+## Deployment and hosting
+
+Serve `dist/` as static files, with every unknown path falling back to `index.html`. The router uses HTML5 history mode (`createWebHistory`), so without that fallback a page refresh on any route like `/donations` returns 404.
+
+The repo has no Dockerfile, CI pipeline (`bitbucket-pipelines.yml`), or web-server config — DevOps owns all of these.
+
+Nginx example:
+
+```nginx
+server {
+    listen 80;
+    server_name <frontend-domain>;
+    root /var/www/eyrad-frontend/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+}
+```
+
+Suggested pipeline:
+
+1. Trigger on push to `master` (production) and `develop` (staging).
+2. Write `.env.production` from the pipeline's secured variables for that environment.
+3. `npm ci` then `npm run build`.
+4. Upload `dist/` to the server or bucket (replace atomically, e.g. new release folder + symlink swap).
+5. Purge the CDN cache for `index.html` only.
+
+The app is served from the domain root (`base` is `/`). Hosting under a sub-path needs `base` set in `vite.config.ts`.
+
+## External services
+
+The browser calls these hosts directly; they matter for CORS on the backends and for any Content-Security-Policy or egress allow-list.
+
+| Service | Host(s) | Protocol |
+| --- | --- | --- |
+| Main backend API | `VITE_BACKEND_URL` (`service.eyrad.net`) | HTTPS (axios) |
+| Campaigns service | `campaigns.eyrad.net` | HTTPS |
+| Short links | `eyrd.me` | HTTPS |
+| Realtime (Ably) | Ably cloud; token issued by backend `/broadcasting/auth` | WebSocket |
+| WhatsApp status | `api.ultramsg.com` + a socket.io server URL passed from the backend | HTTPS / WebSocket |
+| EyradPay | `VITE_EYRADPAY_URL` (e.g. `test.eyradpay.com`) | HTTPS / iframe |
+| POS receipts | `pos.eyrad.net` | Links |
+| Google reCAPTCHA v3 | `google.com`, `gstatic.com` | HTTPS (script) |
+| Help chatbot | `VITE_CHATBOT_SRC` | HTTPS (script) |
+| QR images | `api.qrserver.com` | HTTPS (images) |
+| Help center | `help.eyrad.net` | Links |
+
+The backends must allow the frontend's origin in CORS, including `Authorization` headers.
+
+## Operational notes
+
+- **Caching:** never cache `index.html` (it points to the new hashed bundles); cache `assets/` for a year. A stale `index.html` after a deploy causes blank pages or missing-chunk errors.
+- **HTTPS only:** reCAPTCHA, payments and WebSockets need a secure origin.
+- **WebSockets:** if a proxy or WAF sits in front, allow WebSocket upgrades to Ably and the socket.io host.
+- **Rollback:** keep the last 3–5 `dist/` releases; rollback = point back to the previous folder. No database or migration on this side.
+- **Build failures:** `npm run build` fails on any TypeScript error. `npm run build-only` is an emergency bypass, not the norm.
+- **Language:** the app is Arabic, right-to-left (`lang="ar" dir="rtl"`); no server-side impact.
+- **Uncommitted local files:** `tsconfig.app.tsbuildinfo` is a build cache and should be git-ignored.
